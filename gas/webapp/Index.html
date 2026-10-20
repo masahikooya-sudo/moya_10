@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<style>
+  :root { --fg:#1f2328; --muted:#656d76; --line:#d0d7de; --bg:#f6f8fa; --accent:#0b57d0; --warn:#9a6700; --warn-bg:#fff8c5; --err:#cf222e; --err-bg:#ffebe9; --ok:#1a7f37; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Hiragino Sans","Meiryo",sans-serif; color:var(--fg); background:var(--bg); font-size:14px; }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:12px 16px; display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; }
+  nav button { background:none; border:none; padding:8px 12px; cursor:pointer; font-size:14px; border-radius:6px; }
+  nav button.active { background:var(--bg); font-weight:bold; }
+  #me { margin-left:auto; color:var(--muted); font-size:12px; }
+  main { max-width:880px; margin:16px auto; padding:0 16px; }
+  section.card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-weight:bold; margin:12px 0 4px; }
+  label small { font-weight:normal; color:var(--muted); }
+  input[type=text], input[type=number], select, textarea { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  textarea { min-height:80px; }
+  .btn { padding:8px 16px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; font:inherit; }
+  .btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .btn.danger { color:var(--err); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .msg { padding:8px 12px; border-radius:6px; margin:8px 0; white-space:pre-wrap; }
+  .msg.err { background:var(--err-bg); color:var(--err); }
+  .msg.warn { background:var(--warn-bg); color:var(--warn); }
+  .msg.ok { background:#dafbe1; color:var(--ok); }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr.click { cursor:pointer; } tr.click:hover { background:var(--bg); }
+  .badge { display:inline-block; padding:2px 8px; border-radius:10px; background:var(--bg); border:1px solid var(--line); font-size:12px; white-space:nowrap; }
+  dl { display:grid; grid-template-columns:120px 1fr; gap:6px 12px; margin:0; }
+  dt { color:var(--muted); } dd { margin:0; white-space:pre-wrap; word-break:break-all; }
+  .checks label { font-weight:normal; display:flex; gap:8px; align-items:flex-start; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .hidden { display:none; }
+  @media (max-width:600px) { dl { grid-template-columns:1fr; } dt { margin-top:6px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>外部ファイル送付申請（PrimeDrive）</h1>
+  <nav>
+    <button data-tab="new" class="active">新規申請</button>
+    <button data-tab="mine">自分の申請</button>
+    <button data-tab="approve" class="hidden" id="nav-approve">承認</button>
+  </nav>
+  <span id="me"></span>
+</header>
+<main>
+  <div id="global-msg"></div>
+
+  <!-- 新規申請 -->
+  <div id="tab-new">
+    <section class="card">
+      <label>取引先 <small>マスタ登録済みのドメイン以外には送付できません</small></label>
+      <select id="f-company"></select>
+      <div id="company-domains" style="color:var(--muted);font-size:12px;margin-top:4px"></div>
+
+      <label>宛先(To) <small>複数はカンマ区切り</small></label>
+      <input type="text" id="f-to" autocomplete="off">
+      <label>宛先(To) 再入力 <small>コピー＆ペーストせず手入力してください</small></label>
+      <input type="text" id="f-to2" autocomplete="off" onpaste="return false">
+      <label>宛先(Cc)</label>
+      <input type="text" id="f-cc" autocomplete="off">
+
+      <label>件名</label>
+      <input type="text" id="f-subject">
+      <label>本文 <small>{{URL}} と {{有効期限}} の位置に送付キー情報を差し込みます（省略時は末尾に追記）。パスワードは別の下書きに記載されます。</small></label>
+      <textarea id="f-body" style="min-height:200px"></textarea>
+
+      <label>送付ファイル <small>合計 30MB まで</small></label>
+      <input type="file" id="f-files" multiple>
+
+      <label>送付目的 <small>承認者が判断に使います</small></label>
+      <textarea id="f-purpose"></textarea>
+
+      <label>送付キー有効期限（日）</label>
+      <input type="number" id="f-expiry" min="1" max="14" value="7">
+
+      <label>承認者</label>
+      <select id="f-approver"></select>
+
+      <div id="new-msg"></div>
+      <div class="row">
+        <button class="btn" id="btn-check">入力チェック</button>
+        <button class="btn primary" id="btn-submit">承認を申請する</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- 自分の申請 / 承認 一覧 -->
+  <div id="tab-mine" class="hidden"><section class="card"><table id="list-mine"></table></section></div>
+  <div id="tab-approve" class="hidden"><section class="card"><table id="list-approve"></table></section></div>
+
+  <!-- 詳細 -->
+  <div id="tab-detail" class="hidden">
+    <section class="card">
+      <button class="btn" id="btn-back">← 一覧へ戻る</button>
+      <h2 id="d-title" style="font-size:16px"></h2>
+      <div id="d-warnings"></div>
+      <dl id="d-fields"></dl>
+      <div id="d-actions"></div>
+      <div id="d-msg"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+var boot = null;
+var lastTab = 'mine';
+var DRAFT_NOTE = '「下書きを作成」を押すと Gmail 用の下書き作成画面が開きます。メールは送信されません。内容を確認のうえ、ご自身で送信してください。';
+
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function msg(el, cls, text) { el.innerHTML = text ? '<div class="msg ' + cls + '">' + esc(text) + '</div>' : ''; }
+function call(fn) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function (resolve, reject) {
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(function (e) { reject(e.message || e); })[fn].apply(null, args);
+  });
+}
+
+function showTab(name) {
+  ['new', 'mine', 'approve', 'detail'].forEach(function (t) { $('tab-' + t).classList.toggle('hidden', t !== name); });
+  document.querySelectorAll('nav button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
+  if (name === 'mine' || name === 'approve') { lastTab = name; loadList(name); }
+}
+document.querySelectorAll('nav button').forEach(function (b) { b.onclick = function () { showTab(b.dataset.tab); }; });
+$('btn-back').onclick = function () { showTab(lastTab); };
+
+call('getBootstrap').then(function (b) {
+  boot = b;
+  $('me').textContent = b.me;
+  if (b.isApprover) $('nav-approve').classList.remove('hidden');
+  $('f-company').innerHTML = '<option value="">選択してください</option>' + b.clients.map(function (c) { return '<option>' + esc(c.name) + '</option>'; }).join('');
+  $('f-approver').innerHTML = '<option value="">選択してください</option>' + b.approvers.map(function (a) { return '<option value="' + esc(a.email) + '">' + esc(a.name + '（' + a.email + '）') + '</option>'; }).join('');
+}).catch(function (e) { msg($('global-msg'), 'err', e); });
+
+$('f-company').onchange = function () {
+  var c = boot.clients.filter(function (c) { return c.name === $('f-company').value; })[0];
+  $('company-domains').textContent = c ? '許可ドメイン：' + c.domains.join(', ') : '';
+};
+
+function norm(s) { return s.split(/[,;\s]+/).map(function (x) { return x.trim().toLowerCase(); }).filter(Boolean).sort().join(','); }
+
+function readForm(withData) {
+  var files = Array.prototype.slice.call($('f-files').files);
+  var base = {
+    company: $('f-company').value, to: $('f-to').value, cc: $('f-cc').value,
+    subject: $('f-subject').value, body: $('f-body').value, purpose: $('f-purpose').value,
+    expiryDays: Number($('f-expiry').value), approver: $('f-approver').value
+  };
+  if (!withData) {
+    base.files = files.map(function (f) { return { name: f.name, size: f.size }; });
+    return Promise.resolve(base);
+  }
+  return Promise.all(files.map(function (f) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve({ name: f.name, size: f.size, mimeType: f.type, base64: reader.result.split(',')[1] }); };
+      reader.onerror = reject;
+      reader.readAsDataURL(f);
+    });
+  })).then(function (list) { base.files = list; return base; });
+}
+
+function localCheck() {
+  if (norm($('f-to').value) !== norm($('f-to2').value)) return '宛先(To) と再入力の内容が一致しません。';
+  return '';
+}
+
+function renderCheck(res) {
+  var html = '';
+  if (res.errors.length) html += '<div class="msg err">' + res.errors.map(esc).join('\n') + '</div>';
+  if (res.warnings.length) html += '<div class="msg warn">⚠ 確認してください\n' + res.warnings.map(esc).join('\n') + '</div>';
+  if (!res.errors.length && !res.warnings.length) html = '<div class="msg ok">問題は見つかりませんでした。</div>';
+  $('new-msg').innerHTML = html;
+}
+
+$('btn-check').onclick = function () {
+  var e = localCheck();
+  if (e) return msg($('new-msg'), 'err', e);
+  readForm(false).then(function (f) { return call('checkRequest', f); }).then(renderCheck)
+    .catch(function (e) { msg($('new-msg'), 'err', e); });
+};
+
+$('btn-submit').onclick = function () {
+  var e = localCheck();
+  if (e) return msg($('new-msg'), 'err', e);
+  var btn = $('btn-submit');
+  btn.disabled = true;
+  msg($('new-msg'), 'ok', '送信中…');
+  readForm(true).then(function (f) {
+    return call('submitRequest', f).then(function (res) {
+      if (res.needAck) {
+        if (!confirm('以下の注意事項があります。内容を確認済みとして申請しますか？\n\n' + res.warnings.join('\n'))) { renderCheck(res); return null; }
+        f.acknowledgeWarnings = true;
+        return call('submitRequest', f);
+      }
+      return res;
+    });
+  }).then(function (res) {
+    if (!res) return;
+    if (!res.ok) return renderCheck(res);
+    msg($('new-msg'), 'ok', '申請しました（申請ID：' + res.requestId + '）。承認者に通知しました。');
+    ['f-to', 'f-to2', 'f-cc', 'f-subject', 'f-body', 'f-purpose', 'f-files'].forEach(function (id) { $(id).value = ''; });
+  }).catch(function (e) { msg($('new-msg'), 'err', e); })
+    .then(function () { btn.disabled = false; });
+};
+
+function loadList(kind) {
+  var table = $(kind === 'mine' ? 'list-mine' : 'list-approve');
+  table.innerHTML = '<tr><td>読み込み中…</td></tr>';
+  call(kind === 'mine' ? 'listMyRequests' : 'listApprovalRequests').then(function (rows) {
+    if (!rows.length) { table.innerHTML = '<tr><td>申請はありません。</td></tr>'; return; }
+    table.innerHTML = '<tr><th>申請日時</th><th>状態</th><th>取引先</th><th>件名</th><th>' + (kind === 'mine' ? '承認者' : '申請者') + '</th></tr>' +
+      rows.map(function (r) {
+        return '<tr class="click" data-id="' + esc(r.requestId) + '"><td>' + esc(r.createdAt) + '</td><td><span class="badge">' + esc(r.status) + '</span></td><td>' +
+          esc(r.company) + '</td><td>' + esc(r.subject) + '</td><td>' + esc(kind === 'mine' ? r.approver : r.applicant) + '</td></tr>';
+      }).join('');
+    table.querySelectorAll('tr.click').forEach(function (tr) { tr.onclick = function () { openDetail(tr.dataset.id); }; });
+  }).catch(function (e) { table.innerHTML = '<tr><td>' + esc(e) + '</td></tr>'; });
+}
+
+function openDetail(id) {
+  showTab('detail');
+  msg($('d-msg'), '', '');
+  $('d-fields').innerHTML = '読み込み中…';
+  $('d-actions').innerHTML = '';
+  call('getRequest', id).then(renderDetail).catch(function (e) { msg($('d-msg'), 'err', e); });
+}
+
+function renderDetail(r) {
+  $('d-title').textContent = r.requestId + '　' + r.status;
+  $('d-warnings').innerHTML = r.warnings.length ? '<div class="msg warn">⚠ 申請時の注意事項\n' + r.warnings.map(esc).join('\n') + '</div>' : '';
+  var fields = [
+    ['申請者', r.applicant], ['承認者', r.approver], ['申請日時', r.createdAt], ['取引先', r.company],
+    ['宛先(To)', r.to], ['宛先(Cc)', r.cc], ['件名', r.subject], ['本文', r.body], ['送付目的', r.purpose],
+    ['有効期限', r.expiryDays + ' 日'], ['承認/差戻し', r.decidedAt + (r.approverComment ? '\n' + r.approverComment : '')],
+    ['送付キー', r.sendKeyIssued ? '発行済み（期限 ' + r.keyExpiresAt + '）' : '未発行'],
+    ['エラー', r.errorMessage], ['下書き作成', r.draftedAt]
+  ];
+  var html = fields.filter(function (f) { return f[1] && String(f[1]).trim(); })
+    .map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('');
+  html += '<dt>ファイル</dt><dd>' + r.files.map(function (f) {
+    return (f.url && r.canApprove ? '<a href="' + esc(f.url) + '" target="_blank">' + esc(f.name) + '</a>' : esc(f.name)) + '（' + Math.ceil(f.size / 1024) + ' KB）';
+  }).join('<br>') + '</dd>';
+  $('d-fields').innerHTML = html;
+
+  var a = '';
+  if (r.canApprove) {
+    a += '<h3 style="font-size:14px">承認者による確認</h3><div class="checks">' +
+      '<label><input type="checkbox" id="c-rcpt">宛先（To/Cc）がすべて正しい取引先担当者であることを確認した</label>' +
+      '<label><input type="checkbox" id="c-files">ファイルを開いて内容を確認し、送付して問題ないことを確認した</label>' +
+      '<label><input type="checkbox" id="c-purpose">送付目的が妥当であることを確認した</label></div>' +
+      '<label>コメント <small>差戻し時は必須</small></label><textarea id="c-comment"></textarea>' +
+      '<div class="row"><button class="btn primary" id="btn-approve">承認する</button><button class="btn danger" id="btn-reject">差戻す</button></div>';
+  }
+  if (r.canDraft) a += '<div class="msg ok">' + esc(DRAFT_NOTE) + '</div><div class="row"><button class="btn primary" id="btn-draft">下書きを作成</button></div>';
+  var sub = '';
+  if (r.canRetry) sub += '<button class="btn" id="btn-retry">送付キーの発行を再実行</button>';
+  if (r.canCancel) sub += '<button class="btn danger" id="btn-cancel">申請を取下げる</button>';
+  if (sub) a += '<div class="row">' + sub + '</div>';
+  $('d-actions').innerHTML = a;
+
+  function act(promise) {
+    return promise.then(function () { openDetail(r.requestId); }).catch(function (e) { msg($('d-msg'), 'err', e); });
+  }
+  if (r.canApprove) {
+    $('btn-approve').onclick = function () {
+      if (!confirm('承認すると PrimeDrive の送付キーが発行されます。よろしいですか？')) return;
+      act(call('approveRequest', r.requestId, $('c-comment').value,
+        { recipients: $('c-rcpt').checked, files: $('c-files').checked, purpose: $('c-purpose').checked }));
+    };
+    $('btn-reject').onclick = function () { act(call('rejectRequest', r.requestId, $('c-comment').value)); };
+  }
+  if (r.canDraft) {
+    $('btn-draft').onclick = function () {
+      var w = window.open('', '_blank');
+      call('issueDraftTicket', r.requestId).then(function (url) { w.location.href = url; })
+        .catch(function (e) { w.close(); msg($('d-msg'), 'err', e); });
+    };
+  }
+  if (r.canRetry) $('btn-retry').onclick = function () { act(call('retryRequest', r.requestId)); };
+  if (r.canCancel) $('btn-cancel').onclick = function () { if (confirm('申請を取下げますか？')) act(call('cancelRequest', r.requestId)); };
+}
+</script>
+</body>
+</html>

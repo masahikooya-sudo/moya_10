@@ -1,0 +1,8 @@
+{
+  "name": "primedrive-send-workflow",
+  "private": true,
+  "description": "PrimeDrive を使った外部ファイル送付の承認・Gmail 下書き作成ワークフロー",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<style>
+  :root { --fg:#1f2328; --muted:#656d76; --line:#d0d7de; --bg:#f6f8fa; --accent:#0b57d0; --err:#cf222e; --err-bg:#ffebe9; --ok:#1a7f37; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Hiragino Sans","Meiryo",sans-serif; color:var(--fg); background:var(--bg); font-size:14px; }
+  main { max-width:760px; margin:16px auto; padding:0 16px; }
+  section { background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:16px; }
+  h1 { font-size:16px; } h2 { font-size:14px; margin-top:0; }
+  pre { white-space:pre-wrap; word-break:break-all; background:var(--bg); padding:12px; border-radius:6px; font:inherit; }
+  .rcpt label { display:flex; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); font-size:15px; }
+  .btn { padding:10px 20px; border-radius:6px; border:1px solid var(--accent); background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .msg { padding:8px 12px; border-radius:6px; margin:8px 0; white-space:pre-wrap; }
+  .msg.err { background:var(--err-bg); color:var(--err); }
+  .msg.ok { background:#dafbe1; color:var(--ok); }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gmail 下書き作成（送信はされません）</h1>
+  <div id="msg"><div class="msg">読み込み中…</div></div>
+  <div id="content" style="display:none">
+    <section>
+      <h2>1. 宛先を 1 件ずつ確認してください</h2>
+      <p class="muted">取引先：<span id="company"></span></p>
+      <div class="rcpt" id="rcpt"></div>
+    </section>
+    <section>
+      <h2>2. 件名・本文</h2>
+      <p><b id="subject"></b></p>
+      <pre id="body"></pre>
+      <p class="muted">送付ファイル：<span id="files"></span><br>パスワードは別の下書き（②）に記載されます。</p>
+    </section>
+    <button class="btn" id="btn" disabled>下書きを 2 通作成する</button>
+  </div>
+  <div id="done" style="display:none">
+    <section>
+      <h2>下書きを作成しました</h2>
+      <p>Gmail の「下書き」フォルダで内容を確認し、<b>ご自身で送信</b>してください。<br>
+      パスワードのメールは、本文メールの受信を先方に確認してから送ることを推奨します。</p>
+      <ul id="draft-list"></ul>
+      <p><a href="https://mail.google.com/mail/u/0/#drafts" target="_blank">Gmail の下書きフォルダを開く</a></p>
+    </section>
+  </div>
+</main>
+<script>
+var requestId = <?= requestId ?>;
+var ticket = <?= ticket ?>;
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function err(e) { $('msg').innerHTML = '<div class="msg err">' + esc(e.message || e) + '</div>'; }
+
+function updateBtn() {
+  var boxes = document.querySelectorAll('#rcpt input');
+  $('btn').disabled = !Array.prototype.every.call(boxes, function (b) { return b.checked; });
+}
+
+google.script.run.withFailureHandler(err).withSuccessHandler(function (c) {
+  $('msg').innerHTML = '';
+  $('content').style.display = '';
+  $('company').textContent = c.company;
+  $('rcpt').innerHTML = c.to.map(function (a) { return ['To', a]; }).concat(c.cc.map(function (a) { return ['Cc', a]; }))
+    .map(function (p) { return '<label><input type="checkbox" value="' + esc(p[1]) + '"><span>' + p[0] + '：<b>' + esc(p[1]) + '</b></span></label>'; }).join('');
+  document.querySelectorAll('#rcpt input').forEach(function (b) { b.onchange = updateBtn; });
+  $('subject').textContent = c.subject;
+  $('body').textContent = c.body;
+  $('files').textContent = c.files.join(', ');
+}).loadPreview(requestId, ticket);
+
+$('btn').onclick = function () {
+  $('btn').disabled = true;
+  $('msg').innerHTML = '<div class="msg">作成中…</div>';
+  var confirmed = Array.prototype.map.call(document.querySelectorAll('#rcpt input:checked'), function (b) { return b.value; });
+  google.script.run.withFailureHandler(function (e) { err(e); updateBtn(); }).withSuccessHandler(function (res) {
+    $('msg').innerHTML = '';
+    $('content').style.display = 'none';
+    $('done').style.display = '';
+    $('draft-list').innerHTML = res.drafts.map(function (d) {
+      return '<li>' + esc(d.label) + '：<a target="_blank" href="https://mail.google.com/mail/u/0/#drafts?compose=' + encodeURIComponent(d.id) + '">' + esc(d.subject) + '</a></li>';
+    }).join('');
+  }).createDrafts(requestId, ticket, confirmed);
+};
+</script>
+</body>
+</html>
