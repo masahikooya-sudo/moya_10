@@ -1,0 +1,6 @@
+# ★手で追加 B：Web サービスを呼び出します（要求本文は complete 用。作成手順.md「3. 手で追加するアクション」）
+Variables.ConvertJsonToCustomObject Json: Response CustomObject=> Res
+IF Res['ok'] <> True THEN
+    SET ErrMsg TO $'''完了登録に失敗：%Res['error']%'''
+    CALL FailJob
+END

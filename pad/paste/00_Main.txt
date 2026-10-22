@@ -1,0 +1,25 @@
+# ===== 設定（環境に合わせて変更） =====
+SET ApiUrl TO $'''https://script.google.com/macros/s/XXXXXXXX/exec'''
+SET StagingRoot TO $'''G:\\共有ドライブ\\外部送付ステージング'''
+SET PrimeDriveUrl TO $'''https://primedrive.jp/v2/browse'''
+# PrimeDrive のホームからのアップロード先（/ 区切り。空ならホーム直下）
+SET UploadFolder TO $'''外部送付'''
+SET MaxDownloads TO 10
+SET FileWaitSec TO 600
+SET MaxJobs TO 50
+SET ErrorShotDir TO $'''C:\\PAD\\PrimeDrive\\errors'''
+SET BrowserTitle TO $'''PrimeDrive*'''
+# ===== 設定ここまで =====
+CALL LoadCredentials
+LOOP JobNo FROM 1 TO MaxJobs STEP 1
+    CALL QueueJob
+    IF HasJob = False THEN
+        EXIT LOOP
+    END
+    CALL ProcessJob
+    IF JobOk = True THEN
+        CALL CompleteJob
+    ELSE
+        CALL FailJob
+    END
+END

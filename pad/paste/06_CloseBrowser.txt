@@ -1,0 +1,34 @@
+SET JsTimeout TO 15
+SET JsName TO $'''Logout'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ if (/ログアウトしました/.test(document.body.innerText)) return \'OK\';
+ if (q(\'input[name=corpId]\')) return \'OK\';
+ var item = qa(\'.PopupMenu .MenuItem\').filter(function (m) { return m.innerText.trim() === \'ログアウト\'; })[0];
+ if (item) { item.click(); return \'WAIT\'; }
+ var u = q(\'button.UserButton\');
+ if (u) u.dispatchEvent(new MouseEvent(\'mouseover\', { bubbles: true, relatedTarget: document.body }));
+ return \'WAIT\';
+}'''
+CALL RunJs
+WebAutomation.CloseWebBrowser BrowserInstance: Browser
+ON ERROR
+END
+SET BrowserOpen TO False

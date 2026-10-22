@@ -1,0 +1,22 @@
+# Js を実行し、WAIT の間は 1 秒ごとに再実行（最大 JsTimeout 回）。
+# 結果：JsOk（True/False）、JsResult、JsParts（| 区切り）、失敗時 ErrMsg
+SET JsOk TO False
+SET JsResult TO $'''WAIT'''
+LOOP JsTry FROM 1 TO JsTimeout STEP 1
+    WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: Js Result=> JsResult
+    ON ERROR
+        SET JsResult TO $'''WAIT'''
+    END
+    IF JsResult <> $'''WAIT''' THEN
+        EXIT LOOP
+    END
+    WAIT 1
+END
+Text.SplitText.SplitWithDelimiter Text: JsResult CustomDelimiter: $'''|''' IsRegEx: False Result=> JsParts
+IF JsResult = $'''WAIT''' THEN
+    SET ErrMsg TO $'''%JsName%：画面の応答待ちがタイムアウトしました'''
+ELSE IF JsParts[0] = $'''OK''' THEN
+    SET JsOk TO True
+ELSE
+    SET ErrMsg TO $'''%JsName%：%JsResult%'''
+END

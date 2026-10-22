@@ -312,11 +312,10 @@ LOOP FOREACH FileName IN Job['files']
         GOTO PdError
     END
     SET ErrMsg TO $'''ファイル選択ダイアログを操作できません：%FileName%'''
-    # ★手で設定 E：次の 2 つの「キーの送信」は、送信先のウィンドウ（タイトル・クラス）を画面で設定する（作成手順.md「3. 手で追加するアクション」）
     Clipboard.SetText Text: $'''%JobDir%\\%FileName%'''
-    MouseAndKeyboard.SendKeys.FocusAndSendKeysByTitleClass WindowTitle: BrowserTitle WindowClass: $'''Chrome_WidgetWin_1''' TextToSend: $'''{Enter}''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+    # ★手で追加 E-1：キーの送信（ブラウザに Enter。作成手順.md「3. 手で追加するアクション」）
     WAIT 2
-    MouseAndKeyboard.SendKeys.FocusAndSendKeysByTitleClass WindowTitle: $'''開く''' WindowClass: $'''#32770''' TextToSend: $'''{Control}({V}){Enter}''' DelayBetweenKeystrokes: 50 SendTextAsHardwareKeys: False
+    # ★手で追加 E-2：キーの送信（「開く」にパスを貼り付けて Enter。作成手順.md「3. 手で追加するアクション」）
     Clipboard.Clear
     SET JsTimeout TO 20
     SET JsName TO $'''UploadStart'''
