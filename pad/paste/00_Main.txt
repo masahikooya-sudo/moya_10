@@ -10,6 +10,41 @@ SET MaxJobs TO 50
 SET ErrorShotDir TO $'''C:\\PAD\\PrimeDrive\\errors'''
 SET BrowserTitle TO $'''PrimeDrive*'''
 # ===== 設定ここまで =====
+# ===== 変数の初期化（貼り付けたときに変数として認識させるため。消さないでください） =====
+SET PdCorpIdB64 TO $''''''
+SET PdUserIdB64 TO $''''''
+SET PdPasswordB64 TO $''''''
+SET RobotToken TO $''''''
+SET PsOut TO $'''-|-|-|-'''
+SET HasJob TO False
+SET ReqId TO $''''''
+SET FolderName TO $''''''
+SET LinkPw TO $''''''
+SET ExpiryDays TO $''''''
+SET JobOk TO False
+SET ErrMsg TO $''''''
+SET SendKeyUrl TO $''''''
+SET KeyExpiresAt TO $''''''
+SET BrowserOpen TO False
+SET JobDir TO $''''''
+SET JsTimeout TO 30
+SET JsName TO $''''''
+SET Js TO $''''''
+SET ParentPath TO $''''''
+SET NewFolderName TO $''''''
+SET PdFolder TO $''''''
+SET ChildName TO $''''''
+SET CurPath TO $''''''
+SET UpFileName TO $''''''
+SET TargetName TO $''''''
+SET JsOk TO False
+SET JsResult TO $''''''
+SET PsErr TO $''''''
+SET Response TO $'''{\"ok\":false,\"job\":null}'''
+Variables.ConvertJsonToCustomObject Json: Response CustomObject=> Res
+Variables.ConvertJsonToCustomObject Json: $'''{\"requestId\":\"\",\"folderName\":\"\",\"files\":[],\"password\":\"\",\"expiryDays\":0}''' CustomObject=> Job
+Text.SplitText.SplitWithDelimiter Text: $'''OK''' CustomDelimiter: $'''|''' IsRegEx: False Result=> JsParts
+# ===== 初期化ここまで =====
 CALL LoadCredentials
 LOOP JobNo FROM 1 TO MaxJobs STEP 1
     CALL QueueJob
