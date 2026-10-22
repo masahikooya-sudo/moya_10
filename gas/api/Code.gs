@@ -9,7 +9,7 @@
  *   INTERNAL_DOMAIN       自社ドメイン
  *   ROBOT_TOKEN           PAD 用の共有シークレット（32 文字以上のランダム文字列）
  *   DRAFTER_SECRET        下書き作成アプリ用の共有シークレット（32 文字以上）
- *   SENDKEY_URL_PREFIX    PrimeDrive 送付キー URL の先頭（例：https://xxxx.primedrive.jp/）
+ *   SENDKEY_URL_PREFIX    PrimeDrive 送付キー URL の先頭（例：https://primedrive.jp/v2/access?key=）
  *   WEBAPP_URL            申請 Web アプリの URL（通知メール用）
  *   PASSWORD_LENGTH       リンクパスワード桁数（省略時 12）
  *   PROCESSING_TIMEOUT_MIN  PAD 処理のタイムアウト分数（省略時 60）
