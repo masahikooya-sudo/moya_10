@@ -22,6 +22,8 @@ SET FileWaitSec TO 600
 SET MaxJobs TO 50
 SET ErrorShotDir TO $'''C:\\PAD\\PrimeDrive\\errors'''
 SET BrowserTitle TO $'''PrimeDrive*'''
+# 試運転用：True にすると API を使わず、テスト用ファイルで PrimeDrive の操作だけを行う（試運転手順.md 参照）
+SET TestMode TO False
 # ===== 設定ここまで =====
 # ===== 変数の初期化（貼り付けたときに変数として認識させるため。消さないでください） =====
 SET PdCorpIdB64 TO $''''''
@@ -59,16 +61,20 @@ Variables.ConvertJsonToCustomObject Json: $'''{\"requestId\":\"\",\"folderName\"
 Text.SplitText.SplitWithDelimiter Text: $'''OK''' CustomDelimiter: $'''|''' IsRegEx: False Result=> JsParts
 # ===== 初期化ここまで =====
 CALL LoadCredentials
-LOOP JobNo FROM 1 TO MaxJobs STEP 1
-    CALL QueueJob
-    IF HasJob = False THEN
-        EXIT LOOP
-    END
-    CALL ProcessJob
-    IF JobOk = True THEN
-        CALL CompleteJob
-    ELSE
-        CALL FailJob
+IF TestMode = True THEN
+    CALL TestPrimeDrive
+ELSE
+    LOOP JobNo FROM 1 TO MaxJobs STEP 1
+        CALL QueueJob
+        IF HasJob = False THEN
+            EXIT LOOP
+        END
+        CALL ProcessJob
+        IF JobOk = True THEN
+            CALL CompleteJob
+        ELSE
+            CALL FailJob
+        END
     END
 END
 
@@ -747,4 +753,15 @@ FUNCTION FailJob GLOBAL
 # JSON を壊さないよう、制御文字・ダブルクォート・バックスラッシュを空白に置き換える
 # ★手で追加 F：テキストを置換する（作成手順.md「3. 手で追加するアクション」）
 # ★手で追加 B：Web サービスを呼び出します（要求本文は fail 用。作成手順.md「3. 手で追加するアクション」）
+END FUNCTION
+
+FUNCTION TestPrimeDrive GLOBAL
+# 試運転用：API を呼ばずに PrimeDrive の操作（アップロード → 送付キー発行）だけを確認する。
+# 事前にステージングフォルダ（StagingRoot）の中に PADTEST フォルダを作り、test.txt を置いておく。結果は JobOk・SendKeyUrl・KeyExpiresAt・ErrMsg で確認する。
+Variables.ConvertJsonToCustomObject Json: $'''{\"requestId\":\"PADTEST\",\"folderName\":\"PADTEST\",\"files\":[\"test.txt\"],\"password\":\"Test#2026pad\",\"expiryDays\":1}''' CustomObject=> Job
+SET ReqId TO Job['requestId']
+SET FolderName TO Job['folderName']
+SET LinkPw TO Job['password']
+SET ExpiryDays TO Job['expiryDays']
+CALL ProcessJob
 END FUNCTION

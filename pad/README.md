@@ -5,9 +5,10 @@
 
 | ファイル | 内容 |
 |---|---|
-| [paste/](paste/) | PAD のサブフローごとに貼り付けるファイル（9 個） |
-| [flow.robin.txt](flow.robin.txt) | 上の 9 ファイルを 1 つにまとめたもの（参照用） |
+| [paste/](paste/) | PAD のサブフローごとに貼り付けるファイル（10 個） |
+| [flow.robin.txt](flow.robin.txt) | 上の 10 ファイルを 1 つにまとめたもの（参照用） |
 | [作成手順.md](作成手順.md) | 貼り付け方、変数・資格情報の設定、ブラウザー拡張の導入、試運転の手順 |
+| [試運転手順.md](試運転手順.md) | 試運転の 7 段階の手順・確認項目・エラー時の対処 |
 | [画面調査.md](画面調査.md) | PrimeDrive の画面ごとの説明とセレクター一覧 |
 | [LoadCredentials.ps1](LoadCredentials.ps1) | 資格情報を読み出す PowerShell（LoadCredentials で使う。貼り付けで不明なアクションになったときに手で入れ直す用） |
 

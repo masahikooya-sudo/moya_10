@@ -1,0 +1,8 @@
+# 試運転用：API を呼ばずに PrimeDrive の操作（アップロード → 送付キー発行）だけを確認する。
+# 事前にステージングフォルダ（StagingRoot）の中に PADTEST フォルダを作り、test.txt を置いておく。結果は JobOk・SendKeyUrl・KeyExpiresAt・ErrMsg で確認する。
+Variables.ConvertJsonToCustomObject Json: $'''{\"requestId\":\"PADTEST\",\"folderName\":\"PADTEST\",\"files\":[\"test.txt\"],\"password\":\"Test#2026pad\",\"expiryDays\":1}''' CustomObject=> Job
+SET ReqId TO Job['requestId']
+SET FolderName TO Job['folderName']
+SET LinkPw TO Job['password']
+SET ExpiryDays TO Job['expiryDays']
+CALL ProcessJob

@@ -9,6 +9,8 @@ SET FileWaitSec TO 600
 SET MaxJobs TO 50
 SET ErrorShotDir TO $'''C:\\PAD\\PrimeDrive\\errors'''
 SET BrowserTitle TO $'''PrimeDrive*'''
+# 試運転用：True にすると API を使わず、テスト用ファイルで PrimeDrive の操作だけを行う（試運転手順.md 参照）
+SET TestMode TO False
 # ===== 設定ここまで =====
 # ===== 変数の初期化（貼り付けたときに変数として認識させるため。消さないでください） =====
 SET PdCorpIdB64 TO $''''''
@@ -46,15 +48,19 @@ Variables.ConvertJsonToCustomObject Json: $'''{\"requestId\":\"\",\"folderName\"
 Text.SplitText.SplitWithDelimiter Text: $'''OK''' CustomDelimiter: $'''|''' IsRegEx: False Result=> JsParts
 # ===== 初期化ここまで =====
 CALL LoadCredentials
-LOOP JobNo FROM 1 TO MaxJobs STEP 1
-    CALL QueueJob
-    IF HasJob = False THEN
-        EXIT LOOP
-    END
-    CALL ProcessJob
-    IF JobOk = True THEN
-        CALL CompleteJob
-    ELSE
-        CALL FailJob
+IF TestMode = True THEN
+    CALL TestPrimeDrive
+ELSE
+    LOOP JobNo FROM 1 TO MaxJobs STEP 1
+        CALL QueueJob
+        IF HasJob = False THEN
+            EXIT LOOP
+        END
+        CALL ProcessJob
+        IF JobOk = True THEN
+            CALL CompleteJob
+        ELSE
+            CALL FailJob
+        END
     END
 END
