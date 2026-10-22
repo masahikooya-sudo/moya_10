@@ -711,6 +711,6 @@ END FUNCTION
 
 FUNCTION FailJob GLOBAL
 # JSON を壊さないよう、制御文字・ダブルクォート・バックスラッシュを空白に置き換える
-Text.Replace Text: ErrMsg TextToFind: $'''[\\x00-\\x1f\\x22\\x5c]''' IsRegEx: True IgnoreCase: False ReplaceWith: $''' ''' ActivateEscapeSequences: False Result=> ErrMsg
+# ★手で追加 F：テキストを置換する（作成手順.md「3. 手で追加するアクション」）
 # ★手で追加 B：Web サービスを呼び出します（要求本文は fail 用。作成手順.md「3. 手で追加するアクション」）
 END FUNCTION
