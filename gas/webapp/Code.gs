@@ -3,7 +3,7 @@
  *
  * スクリプトプロパティ：
  *   SPREADSHEET_ID     申請データを保存するスプレッドシート
- *   STAGING_FOLDER_ID  承認前ファイルを置く共有ドライブ上のフォルダ（PAD 実行 PC で同期）
+ *   STAGING_FOLDER_ID  承認前ファイルを置く共有ドライブ上のフォルダ
  *   INTERNAL_DOMAIN    自社ドメイン（例：example.co.jp）
  *   DRAFTER_URL        下書き作成アプリ（gas/drafter）のデプロイ URL
  */
@@ -210,7 +210,7 @@ function cancelRequest(requestId) {
   return toView_(r);
 }
 
-/** 発行エラーになった申請を再度 PAD の処理待ちに戻す（承認は維持）。 */
+/** 発行エラーになった申請を再度ロボットの処理待ちに戻す（承認は維持）。 */
 function retryRequest(requestId) {
   var me = currentUser_();
   var r = transition_(requestId, [STATUS.ERROR], function (r) {

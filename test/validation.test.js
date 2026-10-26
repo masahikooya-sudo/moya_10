@@ -84,6 +84,7 @@ test('ファイル・件数・期限の制限', () => {
   assert.match(v.validateRequest(input({ files: [{ name: 'a.exe', size: 1 }] }), ctx).errors.join(), /送付できない種類/);
   assert.match(v.validateRequest(input({ files: [{ name: 'a.pdf', size: 31 * 1024 * 1024 }] }), ctx).errors.join(), /30MB/);
   assert.match(v.validateRequest(input({ expiryDays: 30 }), ctx).errors.join(), /有効期限/);
+  assert.match(v.validateRequest(input({ files: [{ name: 'a.pdf', size: 1 }, { name: 'a.pdf', size: 2 }] }), ctx).errors.join(), /同じ名前/);
   const many = Array.from({ length: 11 }, (_, i) => `u${i}@abc-shoji.co.jp`).join(',');
   assert.match(v.validateRequest(input({ to: many }), ctx).errors.join(), /10 件まで/);
 });

@@ -40,13 +40,19 @@ function createWorld() {
     getSheetByName: (n) => sheets[n] || null,
     insertSheet: (n) => (sheets[n] = makeSheet())
   };
+  const driveFiles = {};
   let folderSeq = 0;
   function makeFolder(id) {
     const f = {
       id, trashed: false, viewers: [], files: [],
       getId: () => id,
       createFolder: () => { const nf = makeFolder('folder' + ++folderSeq); folders[nf.id] = nf; return nf; },
-      createFile: (blob) => { f.files.push(blob); return { getSize: () => blob.bytes.length, getId: () => 'file' + f.files.length, getUrl: () => 'https://drive/' + blob.name }; },
+      createFile: (blob) => {
+        f.files.push(blob);
+        const fileId = id + '-file' + f.files.length;
+        driveFiles[fileId] = blob;
+        return { getSize: () => blob.bytes.length, getId: () => fileId, getUrl: () => 'https://drive/' + blob.name };
+      },
       addViewer: (e) => f.viewers.push(e),
       setTrashed: (t) => { f.trashed = t; }
     };
@@ -60,7 +66,10 @@ function createWorld() {
       SpreadsheetApp: { openById: () => ss },
       LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
       Session: { getActiveUser: () => ({ getEmail: () => world.user }) },
-      DriveApp: { getFolderById: (id) => folders[id] },
+      DriveApp: {
+        getFolderById: (id) => folders[id],
+        getFileById: (id) => ({ getBlob: () => ({ getContentType: () => driveFiles[id].type, getBytes: () => driveFiles[id].bytes }) })
+      },
       MailApp: { sendEmail: (m) => mails.push(m) },
       ScriptApp: { getService: () => ({ getUrl: () => 'https://webapp' }) },
       ContentService: { createTextOutput: (t) => ({ setMimeType: () => ({ text: t }) }), MimeType: { JSON: 'json' } },
@@ -69,6 +78,7 @@ function createWorld() {
         getUuid: () => crypto.randomUUID(),
         newBlob: (bytes, type, name) => ({ bytes, type, name }),
         base64Decode: (s) => Buffer.from(s, 'base64'),
+        base64Encode: (b) => Buffer.from(b).toString('base64'),
         computeDigest: (_a, text) => Array.from(crypto.createHash('sha256').update(text, 'utf8').digest()).map((b) => (b > 127 ? b - 256 : b)),
         DigestAlgorithm: { SHA_256: 'sha256' },
         Charset: { UTF_8: 'utf8' }
@@ -150,6 +160,13 @@ test('申請 → 承認 → PAD 発行 → 下書き作成', () => {
   assert.strictEqual(job.password.length, 12);
   assert.deepStrictEqual(job.files, ['見積書.pdf']);
   assert.strictEqual(w.callApi({ action: 'queue', token: 'robot-token' }).job, null, '同じ申請を二重に取り出さない');
+
+  // ロボットは発行中の申請のファイルを取得できる（トークン必須）
+  const file = w.callApi({ action: 'file', token: 'robot-token', requestId: id, index: 0 }).file;
+  assert.strictEqual(file.name, '見積書.pdf');
+  assert.strictEqual(Buffer.from(file.base64, 'base64').toString(), 'pdf');
+  assert.strictEqual(w.callApi({ action: 'file', token: 'wrong', requestId: id, index: 0 }).error, 'unauthorized');
+  assert.match(w.callApi({ action: 'file', token: 'robot-token', requestId: id, index: 5 }).error, /ファイルがありません/);
 
   // 想定外の URL は拒否
   assert.match(w.callApi({ action: 'complete', token: 'robot-token', requestId: id, sendKeyUrl: 'https://evil/' }).error, /形式/);

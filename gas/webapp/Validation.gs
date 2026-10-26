@@ -162,7 +162,10 @@ function validateRequest(input, ctx) {
   if (files.length === 0) errors.push('送付ファイルを選択してください。');
   if (files.length > LIMITS.MAX_FILES) errors.push('ファイルは ' + LIMITS.MAX_FILES + ' 個までです。');
   var total = 0;
+  var seenNames = {};
   files.forEach(function (f) {
+    if (seenNames[f.name]) errors.push('同じ名前のファイルが複数あります：' + f.name);
+    seenNames[f.name] = true;
     total += Number(f.size) || 0;
     if (BLOCKED_EXTENSIONS.indexOf(extensionOf(f.name)) >= 0) {
       errors.push('送付できない種類のファイルです：' + f.name);

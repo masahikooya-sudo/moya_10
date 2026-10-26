@@ -1,5 +1,5 @@
 /**
- * PAD（Power Automate Desktop）および下書き作成アプリ向け API
+ * 送付キー発行ロボット（robot/）および下書き作成アプリ向け API
  * （実行ユーザー：システム用アカウント／アクセス：全員（匿名））
  *
  * 匿名アクセスを許可するため、すべての操作をトークンまたはワンタイムチケットで認可する。
@@ -7,12 +7,12 @@
  * スクリプトプロパティ：
  *   SPREADSHEET_ID        webapp と同じスプレッドシート
  *   INTERNAL_DOMAIN       自社ドメイン
- *   ROBOT_TOKEN           PAD 用の共有シークレット（32 文字以上のランダム文字列）
+ *   ROBOT_TOKEN           ロボット用の共有シークレット（32 文字以上のランダム文字列）
  *   DRAFTER_SECRET        下書き作成アプリ用の共有シークレット（32 文字以上）
- *   SENDKEY_URL_PREFIX    PrimeDrive 送付キー URL の先頭（例：https://xxxx.primedrive.jp/）
+ *   SENDKEY_URL_PREFIX    PrimeDrive ダウンロードリンクの先頭（https://primedrive.jp/v2/access?key=）
  *   WEBAPP_URL            申請 Web アプリの URL（通知メール用）
  *   PASSWORD_LENGTH       リンクパスワード桁数（省略時 12）
- *   PROCESSING_TIMEOUT_MIN  PAD 処理のタイムアウト分数（省略時 60）
+ *   PROCESSING_TIMEOUT_MIN  ロボット処理のタイムアウト分数（省略時 60）
  */
 
 function doPost(e) {
@@ -25,6 +25,7 @@ function doPost(e) {
   try {
     var handlers = {
       queue: robotQueue_,
+      file: robotFile_,
       complete: robotComplete_,
       fail: robotFail_,
       peek: draftPeek_,
@@ -66,10 +67,10 @@ function formatJst_(d) {
   return Utilities.formatDate(new Date(d), 'Asia/Tokyo', 'yyyy年MM月dd日 HH:mm');
 }
 
-// ───────────── PAD 用 ─────────────
+// ───────────── ロボット用 ─────────────
 
 /**
- * 承認済み申請を 1 件取り出して「発行中」にし、PAD が操作に必要な情報を返す。
+ * 承認済み申請を 1 件取り出して「発行中」にし、ロボットが操作に必要な情報を返す。
  * 応答例：{ok:true, job:{requestId, folderName, files:[...], password, expiryDays, company}} / {ok:true, job:null}
  */
 function robotQueue_(req) {
@@ -83,7 +84,7 @@ function robotQueue_(req) {
       return r.status === STATUS.PROCESSING && Date.now() - new Date(r.robotLockedAt).getTime() > timeoutMs;
     }).forEach(function (r) {
       r.status = STATUS.ERROR;
-      r.errorMessage = 'PAD の処理がタイムアウトしました。';
+      r.errorMessage = '送付キー発行ロボットの処理がタイムアウトしました。';
       r.linkPassword = '';
       saveRequest_(r);
       audit_(r.requestId, 'robot', '発行タイムアウト', '');
@@ -114,7 +115,24 @@ function robotQueue_(req) {
   }
 }
 
-/** PAD が送付キーを発行し終えたら URL を登録する。 */
+/**
+ * 発行中の申請の送付ファイルを 1 つ返す（ロボットが PrimeDrive にアップロードするため）。
+ * 応答：{ok:true, file:{name, mimeType, size, base64}}
+ */
+function robotFile_(req) {
+  requireRobot_(req);
+  var r = findRequest_(req.requestId);
+  if (r.status !== STATUS.PROCESSING) throw new Error('発行中の申請ではありません（' + r.status + '）。');
+  var f = r.files[Number(req.index)];
+  if (!f) throw new Error('ファイルがありません：index=' + req.index);
+  var blob = DriveApp.getFileById(f.id).getBlob();
+  return {
+    ok: true,
+    file: { name: f.name, mimeType: blob.getContentType(), size: f.size, base64: Utilities.base64Encode(blob.getBytes()) }
+  };
+}
+
+/** ロボットが送付キーを発行し終えたら URL を登録する。 */
 function robotComplete_(req) {
   requireRobot_(req);
   var url = String(req.sendKeyUrl || '').trim();

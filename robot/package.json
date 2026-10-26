@@ -1,0 +1,14 @@
+{
+  "name": "primedrive-sendkey-robot",
+  "private": true,
+  "description": "承認済みの外部送付申請について PrimeDrive にアップロードし、パスワード付きダウンロードリンクを発行するロボット",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/main.js",
+    "selftest": "node src/selftest.js"
+  },
+  "dependencies": {
+    "playwright": "1.56.1"
+  }
+}
