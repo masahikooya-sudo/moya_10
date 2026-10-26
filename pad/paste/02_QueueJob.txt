@@ -1,0 +1,15 @@
+SET HasJob TO False
+# ★手で追加 B：Web サービスを呼び出します（要求本文は queue 用。作成手順.md「3. 手で追加するアクション」）
+Variables.ConvertJsonToCustomObject Json: Response CustomObject=> Res
+IF Res['ok'] <> True THEN
+    EXIT FUNCTION
+END
+IF IsEmpty(Res['job']) THEN
+    EXIT FUNCTION
+END
+SET Job TO Res['job']
+SET ReqId TO Job['requestId']
+SET FolderName TO Job['folderName']
+SET LinkPw TO Job['password']
+SET ExpiryDays TO Job['expiryDays']
+SET HasJob TO True

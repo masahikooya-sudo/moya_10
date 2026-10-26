@@ -1,0 +1,767 @@
+# ============================================================
+# PrimeDrive 送付キー発行フロー（Power Automate Desktop）
+#   承認済みの申請を API から 1 件ずつ取り出し、PrimeDrive に
+#   アップロードしてリンクパスワード付きのダウンロードリンクを発行する。
+#   承認済みがなくなるまで繰り返す。作成手順は pad/作成手順.md を参照。
+#
+#   このテキストは Main サブフローに貼り付ける。
+#   「★手で追加」のコメントの位置には、PAD の画面からアクションを追加する（作成手順.md 参照）。
+#   FUNCTION ～ END FUNCTION の部分は、同名のサブフローを作成してから
+#   中身（FUNCTION 行と END FUNCTION 行を除く）を貼り付ける。
+# ============================================================
+
+# ---------- Main ----------
+# ===== 設定（環境に合わせて変更） =====
+SET ApiUrl TO $'''https://script.google.com/macros/s/XXXXXXXX/exec'''
+SET StagingRoot TO $'''G:\\共有ドライブ\\外部送付ステージング'''
+SET PrimeDriveUrl TO $'''https://primedrive.jp/v2/browse'''
+# PrimeDrive のホームからのアップロード先（/ 区切り。空ならホーム直下）
+SET UploadFolder TO $'''外部送付'''
+SET MaxDownloads TO 10
+SET FileWaitSec TO 600
+SET MaxJobs TO 50
+SET ErrorShotDir TO $'''C:\\PAD\\PrimeDrive\\errors'''
+SET BrowserTitle TO $'''PrimeDrive*'''
+# 試運転用：True にすると API を使わず、テスト用ファイルで PrimeDrive の操作だけを行う（試運転手順.md 参照）
+SET TestMode TO False
+# ===== 設定ここまで =====
+# ===== 変数の初期化（貼り付けたときに変数として認識させるため。消さないでください） =====
+SET PdCorpIdB64 TO $''''''
+SET PdUserIdB64 TO $''''''
+SET PdPasswordB64 TO $''''''
+SET RobotToken TO $''''''
+SET PsOut TO $'''-|-|-|-'''
+SET HasJob TO False
+SET ReqId TO $''''''
+SET FolderName TO $''''''
+SET LinkPw TO $''''''
+SET ExpiryDays TO $''''''
+SET JobOk TO False
+SET ErrMsg TO $''''''
+SET SendKeyUrl TO $''''''
+SET KeyExpiresAt TO $''''''
+SET BrowserOpen TO False
+SET JobDir TO $''''''
+SET JsTimeout TO 30
+SET JsName TO $''''''
+SET Js TO $''''''
+SET ParentPath TO $''''''
+SET NewFolderName TO $''''''
+SET PdFolder TO $''''''
+SET ChildName TO $''''''
+SET CurPath TO $''''''
+SET UpFileName TO $''''''
+SET TargetName TO $''''''
+SET JsOk TO False
+SET JsResult TO $''''''
+SET PsErr TO $''''''
+SET Response TO $'''{\"ok\":false,\"job\":null}'''
+Variables.ConvertJsonToCustomObject Json: Response CustomObject=> Res
+Variables.ConvertJsonToCustomObject Json: $'''{\"requestId\":\"\",\"folderName\":\"\",\"files\":[],\"password\":\"\",\"expiryDays\":0}''' CustomObject=> Job
+Text.SplitText.SplitWithDelimiter Text: $'''OK''' CustomDelimiter: $'''|''' IsRegEx: False Result=> JsParts
+# ===== 初期化ここまで =====
+CALL LoadCredentials
+IF TestMode = True THEN
+    CALL TestPrimeDrive
+ELSE
+    LOOP JobNo FROM 1 TO MaxJobs STEP 1
+        CALL QueueJob
+        IF HasJob = False THEN
+            EXIT LOOP
+        END
+        CALL ProcessJob
+        IF JobOk = True THEN
+            CALL CompleteJob
+        ELSE
+            CALL FailJob
+        END
+    END
+END
+
+# ---------- サブフロー ----------
+
+FUNCTION LoadCredentials GLOBAL
+# Windows 資格情報マネージャー（Web 資格情報、リソース名 PADRobot）から読み出す。
+# PrimeDrive の値は JavaScript に安全に埋め込めるよう UTF-8 → Base64 にして受け取る。
+# ★手で追加 A：PowerShell スクリプトの実行（作成手順.md「3. 手で追加するアクション」）
+Text.Trim Text: PsOut TrimOption: Text.TrimOption.Both TrimmedText=> PsOut
+Text.SplitText.SplitWithDelimiter Text: PsOut CustomDelimiter: $'''|''' IsRegEx: False Result=> CredParts
+SET PdCorpIdB64 TO CredParts[0]
+SET PdUserIdB64 TO CredParts[1]
+SET PdPasswordB64 TO CredParts[2]
+SET RobotToken TO CredParts[3]
+SET PsOut TO $''''''
+END FUNCTION
+
+FUNCTION QueueJob GLOBAL
+SET HasJob TO False
+# ★手で追加 B：Web サービスを呼び出します（要求本文は queue 用。作成手順.md「3. 手で追加するアクション」）
+Variables.ConvertJsonToCustomObject Json: Response CustomObject=> Res
+IF Res['ok'] <> True THEN
+    EXIT FUNCTION
+END
+IF IsEmpty(Res['job']) THEN
+    EXIT FUNCTION
+END
+SET Job TO Res['job']
+SET ReqId TO Job['requestId']
+SET FolderName TO Job['folderName']
+SET LinkPw TO Job['password']
+SET ExpiryDays TO Job['expiryDays']
+SET HasJob TO True
+END FUNCTION
+
+FUNCTION ProcessJob GLOBAL
+SET JobOk TO False
+SET ErrMsg TO $'''不明なエラー'''
+SET SendKeyUrl TO $''''''
+SET KeyExpiresAt TO $''''''
+SET BrowserOpen TO False
+
+# 1. ステージングにファイルが揃うまで待つ
+SET JobDir TO $'''%StagingRoot%\\%FolderName%'''
+LOOP FOREACH FileName IN Job['files']
+    SET ErrMsg TO $'''ステージングにファイルが届きません：%FileName%'''
+    # ★手で追加 C：ファイルを待機します（作成手順.md「3. 手で追加するアクション」）
+END
+
+# 2. ブラウザ起動 → ログイン
+WebAutomation.LaunchEdge.LaunchEdge Url: PrimeDriveUrl WindowState: WebAutomation.BrowserWindowState.Maximized ClearCache: False ClearCookies: True WaitForPageToLoadTimeout: 60 Timeout: 60 BrowserInstance=> Browser
+ON ERROR
+    SET ErrMsg TO $'''ブラウザを起動できません（拡張機能を確認）'''
+    GOTO PdError
+END
+SET BrowserOpen TO True
+SET JsTimeout TO 30
+SET JsName TO $'''WaitLogin'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ if (q(\'input[name=corpId]\') && q(\'button.LoginButton\')) return \'OK\';
+ if (q(\'button.CommandNewFolder\')) return \'OK|LOGGED_IN\';
+ return \'WAIT\';
+}'''
+CALL RunJs
+IF JsOk = False THEN
+    GOTO PdError
+END
+IF JsResult = $'''OK''' THEN
+    SET JsName TO $'''Login'''
+    SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ function b64(t) { return decodeURIComponent(escape(atob(t))); }
+ var f = q(\'input[name=corpId]\');
+ if (!f) return \'ERR|ログイン画面が見つかりません\';
+ setVal(f, b64(\'%PdCorpIdB64%\'));
+ setVal(q(\'input[name=userId]\'), b64(\'%PdUserIdB64%\'));
+ setVal(q(\'input[name=password]\'), b64(\'%PdPasswordB64%\'));
+ q(\'button.LoginButton\').click();
+ return \'OK\';
+}'''
+    CALL RunJs
+    IF JsOk = False THEN
+        GOTO PdError
+    END
+END
+SET JsName TO $'''WaitHome'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ if (q(\'button.CommandNewFolder\') && q(\'button.TabHome\')) return \'OK\';
+ return \'WAIT\';
+}'''
+CALL RunJs
+IF JsOk = False THEN
+    SET ErrMsg TO $'''PrimeDrive にログインできません：%ErrMsg%'''
+    GOTO PdError
+END
+
+# 3. アップロード先 → 申請 ID のフォルダを作成して開く
+CALL OpenUploadFolder
+IF JsOk = False THEN
+    GOTO PdError
+END
+SET ParentPath TO CurPath
+SET NewFolderName TO FolderName
+SET JsName TO $'''NewFolder'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ var cur = \'%CurPath%\'; var want = \'%NewFolderName%\';
+ var base = \'/HOME\' + (cur ? \'/\' + cur : \'\');
+ var d = q(\'.NewFolderDialog\');
+ if (!d) {
+  if (document.body.dataset.padNewFolder && row(base + \'/\' + document.body.dataset.padNewFolder)) { var made = document.body.dataset.padNewFolder; document.body.dataset.padNewFolder = \'\'; return \'OK|\' + made; }
+  if (document.body.dataset.padNewFolder) return \'WAIT\';
+  q(\'button.CommandNewFolder\').click();
+  return \'WAIT\';
+ }
+ var name = want; var n = 1;
+ while (row(base + \'/\' + name)) { n++; name = want + \'_\' + n; }
+ setVal(q(\'input[name=folderName]\', d), name);
+ document.body.dataset.padNewFolder = name;
+ q(\'button.ProceedButton\', d).click();
+ return \'WAIT\';
+}'''
+CALL RunJs
+IF JsOk = False THEN
+    GOTO PdError
+END
+SET PdFolder TO JsParts[1]
+SET ChildName TO PdFolder
+SET JsName TO $'''OpenChild'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ var cur = \'%CurPath%\'; var name = \'%ChildName%\';
+ var base = \'/HOME\' + (cur ? \'/\' + cur : \'\');
+ var c = crumbs();
+ var inside = c[c.length - 1] === name && rowIds().every(function (i) { return i.indexOf(base + \'/\' + name + \'/\') === 0; });
+ if (inside) return \'OK\';
+ var r = row(base + \'/\' + name);
+ if (r) q(\'td[data-testid=titleDom]\', r).dispatchEvent(new MouseEvent(\'dblclick\', { bubbles: true }));
+ return \'WAIT\';
+}'''
+CALL RunJs
+IF JsOk = False THEN
+    GOTO PdError
+END
+IF ParentPath = $'''''' THEN
+    SET CurPath TO PdFolder
+ELSE
+    SET CurPath TO $'''%ParentPath%/%PdFolder%'''
+END
+
+# 4. ファイルを 1 件ずつアップロード（ファイル選択ダイアログのみキー操作）
+LOOP FOREACH FileName IN Job['files']
+    SET UpFileName TO FileName
+    SET JsTimeout TO 30
+    SET JsName TO $'''UploadOpen'''
+    SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ var d = q(\'.FileUploadDialog\');
+ if (!d) { q(\'button.CommandUpload\').click(); return \'WAIT\'; }
+ var i = q(\'input[type=file]\', d);
+ if (!i) return \'WAIT\';
+ i.focus();
+ return document.activeElement === i ? \'OK\' : \'WAIT\';
+}'''
+    CALL RunJs
+    IF JsOk = False THEN
+        GOTO PdError
+    END
+    SET ErrMsg TO $'''ファイル選択ダイアログを操作できません：%FileName%'''
+    Clipboard.SetText Text: $'''%JobDir%\\%FileName%'''
+    # ★手で追加 E-1：キーの送信（ブラウザに Enter。作成手順.md「3. 手で追加するアクション」）
+    WAIT 2
+    # ★手で追加 E-2：キーの送信（「開く」にパスを貼り付けて Enter。作成手順.md「3. 手で追加するアクション」）
+    Clipboard.Clear
+    SET JsTimeout TO 20
+    SET JsName TO $'''UploadStart'''
+    SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ var d = q(\'.FileUploadDialog\');
+ if (!d) return \'ERR|アップロード画面が閉じています\';
+ var v = q(\'.FileNameInput\', d).value;
+ if (!v) return \'WAIT\';
+ if (v !== \'%UpFileName%\') return \'ERR|選択されたファイル名が違います \' + san(v);
+ q(\'button.UploadStartButton\', d).click();
+ return \'OK\';
+}'''
+    CALL RunJs
+    IF JsOk = False THEN
+        GOTO PdError
+    END
+    SET JsTimeout TO 900
+    SET JsName TO $'''UploadWait'''
+    SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ if (q(\'.FileUploadDialog\')) return \'WAIT\';
+ var cur = \'%CurPath%\';
+ return row(\'/HOME/\' + cur + \'/%UpFileName%\') ? \'OK\' : \'WAIT\';
+}'''
+    CALL RunJs
+    IF JsOk = False THEN
+        GOTO PdError
+    END
+END
+
+# 5. 親フォルダに戻り、申請フォルダに送付キー（ダウンロードリンク）を発行
+SET JsTimeout TO 30
+CALL OpenUploadFolder
+IF JsOk = False THEN
+    GOTO PdError
+END
+SET TargetName TO PdFolder
+SET JsName TO $'''IssueOpen'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ if (q(\'.AccessKeyIssueDialog input[name=availableDays_input]\')) return \'OK\';
+ var cur = \'%CurPath%\';
+ var id = \'/HOME\' + (cur ? \'/\' + cur : \'\') + \'/%TargetName%\';
+ var r = row(id);
+ if (!r) return \'WAIT\';
+ qa(\'tr.ListViewItem\').forEach(function (x) { var c = q(\'input.CheckBoxInput\', x); if (c && c.checked !== (x === r)) c.click(); });
+ var b = q(\'button.CommandSend\');
+ if (!b || qa(\'tr.ListViewItem input.CheckBoxInput\').filter(function (c) { return c.checked; }).length !== 1) return \'WAIT\';
+ b.click();
+ return \'WAIT\';
+}'''
+CALL RunJs
+IF JsOk = False THEN
+    GOTO PdError
+END
+SET JsName TO $'''IssueFill'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var d = q(\'.AccessKeyIssueDialog\');
+ if (!d) return \'ERR|ダウンロードリンク発行画面が見つかりません\';
+ function byLabel(t) { return qa(\'input[type=checkbox]\', d).filter(function (c) { var l = c.closest(\'label\'); return l && l.innerText.trim() === t; })[0]; }
+ setCheck(q(\'input[name=availableDays_checkbox]\', d), false);
+ setVal(q(\'input[name=availableDays_input]\', d), \'%ExpiryDays%\');
+ setCheck(q(\'input[name=downloadCount_checkbox]\', d), false);
+ setVal(q(\'input[name=downloadCount_input]\', d), \'%MaxDownloads%\');
+ setCheck(byLabel(\'プレビューのみ許可\'), false);
+ setCheck(q(\'input[name=downloadPassword_checkbox]\', d), false);
+ setCheck(byLabel(\'ワンタイムパスワード\'), false);
+ setVal(q(\'input[name=downloadPassword_input]\', d), \'%LinkPw%\');
+ setCheck(byLabel(\'ダウンロード時にリンク発行者へメール通知する\'), false);
+ setCheck(byLabel(\'この発行条件をデフォルト値として保存する\'), false);
+ if (q(\'input[name=availableDays_input]\', d).value !== \'%ExpiryDays%\') return \'ERR|有効日数を設定できません\';
+ if (q(\'input[name=downloadPassword_input]\', d).value !== \'%LinkPw%\') return \'ERR|リンクパスワードを設定できません\';
+ var bad = qa(\'.validity-invalid\', d);
+ if (bad.length) return \'ERR|入力エラー \' + san(bad.map(function (b) { return b.name; }).join(\' \'));
+ q(\'button.ProceedButton\', d).click();
+ return \'OK\';
+}'''
+CALL RunJs
+IF JsOk = False THEN
+    GOTO PdError
+END
+SET JsName TO $'''IssueResult'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ var d = q(\'.MailerSelectDialog .ResultDetail\');
+ if (!d) {
+  var f = q(\'.AccessKeyIssueDialog\');
+  if (f && qa(\'.validity-invalid\', f).length) return \'ERR|入力エラー \' + san(qa(\'.validity-invalid\', f).map(function (b) { return b.name; }).join(\' \'));
+  return \'WAIT\';
+ }
+ var lines = d.innerText.split(String.fromCharCode(10));
+ var url = \'\'; var exp = \'\';
+ lines.forEach(function (l) {
+  var i = l.indexOf(\'https://\'); if (l.indexOf(\'ダウンロードリンク\') === 0 && i >= 0) url = l.slice(i).trim();
+  if (l.indexOf(\'有効期限: \') === 0) {
+   var dt = l.slice(6).trim().split(\' \'); var ymd = dt[0].split(\'/\');
+   if (ymd.length === 3 && dt[1]) exp = ymd[0] + \'-\' + ymd[1] + \'-\' + ymd[2] + \'T\' + dt[1] + \':00+09:00\';
+  }
+ });
+ if (!url) return \'ERR|URL を取得できません\';
+ return \'OK|\' + url + \'|\' + exp;
+}'''
+CALL RunJs
+IF JsOk = False THEN
+    GOTO PdError
+END
+SET SendKeyUrl TO JsParts[1]
+SET KeyExpiresAt TO JsParts[2]
+# 送付方法は選ばずに閉じる（PrimeDrive からのメール送信は使わない）
+SET JsName TO $'''IssueClose'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var b = q(\'.MailerSelectDialog .CloseTextButton\');
+ if (b) { b.click(); return \'WAIT\'; }
+ return \'OK\';
+}'''
+CALL RunJs
+SET JobOk TO True
+
+# 6. ログアウト → ブラウザを閉じる
+CALL CloseBrowser
+EXIT FUNCTION
+
+LABEL PdError
+IF BrowserOpen = True THEN
+    # ErrorShotDir は事前に作成しておく
+    # ★手で追加 D：Web ページのスクリーンショットを取得します（作成手順.md「3. 手で追加するアクション」）
+    CALL CloseBrowser
+END
+END FUNCTION
+
+FUNCTION OpenUploadFolder GLOBAL
+# ホームに戻ってから UploadFolder を 1 階層ずつ開く。結果は CurPath。
+SET CurPath TO $''''''
+SET JsName TO $'''GoHome'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ var c = crumbs();
+ if (c.length === 1 && c[0] === \'ホーム\' && q(\'button.CommandNewFolder\')) return \'OK\';
+ var home = qa(\'.DirectoryButton\').filter(function (b) { return b.innerText.trim() === \'ホーム\'; })[0];
+ if (home) home.click(); else q(\'button.TabHome\').click();
+ return \'WAIT\';
+}'''
+CALL RunJs
+IF JsOk = False THEN
+    EXIT FUNCTION
+END
+IF UploadFolder <> $'''''' THEN
+    Text.SplitText.SplitWithDelimiter Text: UploadFolder CustomDelimiter: $'''/''' IsRegEx: False Result=> FolderSegs
+    LOOP FOREACH Seg IN FolderSegs
+        SET ChildName TO Seg
+        SET JsName TO $'''OpenChild'''
+        SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ var e = errPopup(); if (e) return e;
+ var cur = \'%CurPath%\'; var name = \'%ChildName%\';
+ var base = \'/HOME\' + (cur ? \'/\' + cur : \'\');
+ var c = crumbs();
+ var inside = c[c.length - 1] === name && rowIds().every(function (i) { return i.indexOf(base + \'/\' + name + \'/\') === 0; });
+ if (inside) return \'OK\';
+ var r = row(base + \'/\' + name);
+ if (r) q(\'td[data-testid=titleDom]\', r).dispatchEvent(new MouseEvent(\'dblclick\', { bubbles: true }));
+ return \'WAIT\';
+}'''
+        CALL RunJs
+        IF JsOk = False THEN
+            SET ErrMsg TO $'''アップロード先フォルダが見つかりません：%UploadFolder%（%ErrMsg%）'''
+            EXIT FUNCTION
+        END
+        IF CurPath = $'''''' THEN
+            SET CurPath TO Seg
+        ELSE
+            SET CurPath TO $'''%CurPath%/%Seg%'''
+        END
+    END
+END
+END FUNCTION
+
+FUNCTION RunJs GLOBAL
+# Js を実行し、WAIT の間は 1 秒ごとに再実行（最大 JsTimeout 回）。
+# 結果：JsOk（True/False）、JsResult、JsParts（| 区切り）、失敗時 ErrMsg
+SET JsOk TO False
+SET JsResult TO $'''WAIT'''
+LOOP JsTry FROM 1 TO JsTimeout STEP 1
+    WebAutomation.ExecuteJavascript BrowserInstance: Browser Javascript: Js Result=> JsResult
+    ON ERROR
+        SET JsResult TO $'''WAIT'''
+    END
+    IF JsResult <> $'''WAIT''' THEN
+        EXIT LOOP
+    END
+    WAIT 1
+END
+Text.SplitText.SplitWithDelimiter Text: JsResult CustomDelimiter: $'''|''' IsRegEx: False Result=> JsParts
+IF JsResult = $'''WAIT''' THEN
+    SET ErrMsg TO $'''%JsName%：画面の応答待ちがタイムアウトしました'''
+ELSE IF JsParts[0] = $'''OK''' THEN
+    SET JsOk TO True
+ELSE
+    SET ErrMsg TO $'''%JsName%：%JsResult%'''
+END
+END FUNCTION
+
+FUNCTION CloseBrowser GLOBAL
+SET JsTimeout TO 15
+SET JsName TO $'''Logout'''
+SET Js TO $'''function ExecuteScript() {
+ function q(s, r) { return (r || document).querySelector(s); }
+ function qa(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+ function setVal(el, v) {
+  var proto = el.tagName === \'TEXTAREA\' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, \'value\').set.call(el, v);
+  el.dispatchEvent(new Event(\'input\', { bubbles: true }));
+  el.dispatchEvent(new Event(\'change\', { bubbles: true }));
+ }
+ function setCheck(el, on) { if (el && !el.disabled && el.checked !== on) el.click(); }
+ function san(s) { return String(s || \'\').replace(/[^ -~ぁ-んァ-ヶ一-龠ー・、。（）：]/g, \' \').split(String.fromCharCode(34)).join(\' \').split(String.fromCharCode(92)).join(\' \').slice(0, 300); }
+ function errPopup() {
+  var w = qa(\'.PopupWindow\').filter(function (p) { var t = q(\'.DialogTitle\', p); return t && /エラー|警告/.test(t.innerText); })[0];
+  return w ? \'ERR|\' + san(w.innerText) : \'\';
+ }
+ function crumbs() { return qa(\'.DirectoryButton\').map(function (b) { return b.innerText.trim(); }); }
+ function rowIds() { return qa(\'tr.ListViewItem\').map(function (r) { return r.getAttribute(\'data-identifier\'); }); }
+ function row(id) { return qa(\'tr.ListViewItem\').filter(function (r) { return r.getAttribute(\'data-identifier\') === id; })[0]; }
+
+ if (/ログアウトしました/.test(document.body.innerText)) return \'OK\';
+ if (q(\'input[name=corpId]\')) return \'OK\';
+ var item = qa(\'.PopupMenu .MenuItem\').filter(function (m) { return m.innerText.trim() === \'ログアウト\'; })[0];
+ if (item) { item.click(); return \'WAIT\'; }
+ var u = q(\'button.UserButton\');
+ if (u) u.dispatchEvent(new MouseEvent(\'mouseover\', { bubbles: true, relatedTarget: document.body }));
+ return \'WAIT\';
+}'''
+CALL RunJs
+WebAutomation.CloseWebBrowser BrowserInstance: Browser
+ON ERROR
+END
+SET BrowserOpen TO False
+END FUNCTION
+
+FUNCTION CompleteJob GLOBAL
+# ★手で追加 B：Web サービスを呼び出します（要求本文は complete 用。作成手順.md「3. 手で追加するアクション」）
+Variables.ConvertJsonToCustomObject Json: Response CustomObject=> Res
+IF Res['ok'] <> True THEN
+    SET ErrMsg TO $'''完了登録に失敗：%Res['error']%'''
+    CALL FailJob
+END
+END FUNCTION
+
+FUNCTION FailJob GLOBAL
+# JSON を壊さないよう、制御文字・ダブルクォート・バックスラッシュを空白に置き換える
+# ★手で追加 F：テキストを置換する（作成手順.md「3. 手で追加するアクション」）
+# ★手で追加 B：Web サービスを呼び出します（要求本文は fail 用。作成手順.md「3. 手で追加するアクション」）
+END FUNCTION
+
+FUNCTION TestPrimeDrive GLOBAL
+# 試運転用：API を呼ばずに PrimeDrive の操作（アップロード → 送付キー発行）だけを確認する。
+# 事前にステージングフォルダ（StagingRoot）の中に PADTEST フォルダを作り、test.txt を置いておく。結果は JobOk・SendKeyUrl・KeyExpiresAt・ErrMsg で確認する。
+Variables.ConvertJsonToCustomObject Json: $'''{\"requestId\":\"PADTEST\",\"folderName\":\"PADTEST\",\"files\":[\"test.txt\"],\"password\":\"Test#2026pad\",\"expiryDays\":1}''' CustomObject=> Job
+SET ReqId TO Job['requestId']
+SET FolderName TO Job['folderName']
+SET LinkPw TO Job['password']
+SET ExpiryDays TO Job['expiryDays']
+CALL ProcessJob
+END FUNCTION

@@ -78,7 +78,8 @@ sequenceDiagram
 gas/webapp/   申請・承認 Web アプリ（実行：システム用アカウント／アクセス：ドメイン内）
 gas/api/      ロボット・下書き作成アプリ用 API（実行：システム用アカウント／アクセス：匿名＋トークン）
 gas/drafter/  Gmail 下書き作成アプリ（実行：アクセスしたユーザー／アクセス：ドメイン内）
-robot/        送付キー発行ロボット（Windows PC でタスクスケジューラから定期実行）
+robot/        送付キー発行ロボット（推奨。Windows PC でタスクスケジューラから定期実行）
+pad/          Power Automate Desktop 版のフロー（代替。無償版 PAD では手動実行）
 docs/         セットアップ手順
 test/         入力チェック・本文生成・全体フローのテスト（Google サービスはモック）
 ```
